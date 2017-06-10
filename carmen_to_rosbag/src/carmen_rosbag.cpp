@@ -22,16 +22,12 @@
 namespace 
 {
 	// this function maps string to integers so that they can be used in a 'switch' statement
-	// defining a macro which would calculate string hash in compile time and use it for 
-	// a 'switch' statement seemed to be an overkill
 
 	void initialize_for_switch( std::unordered_map<std::string, int>& string_to_number_for_switch )
 	{
-		string_to_number_for_switch["PARAM"] = 0;
-		string_to_number_for_switch["SYNC"] = 1;
+		string_to_number_for_switch["PARAM"] = 1;
 		string_to_number_for_switch["ODOM"] = 2;
 		string_to_number_for_switch["RAWLASER1"] = 3;
-		// TODO figure out whether this is going to need a change
 		string_to_number_for_switch["RAWLASER2"] = 3;
 		string_to_number_for_switch["RAWLASER3"] = 3;
 		string_to_number_for_switch["RAWLASER4"] = 3;
@@ -40,7 +36,6 @@ namespace
 		string_to_number_for_switch["TRUEPOS"] = 5;
 		string_to_number_for_switch["NMEAGGA"] = 6; 
 		string_to_number_for_switch["NMEARMC"] = 7;
-		// TODO sonar, bumper, scannmark, IMU, etc.
 	}
 	
 	void split_string_by_space( const std::string& to_split, std::vector<std::string>& words )
@@ -94,14 +89,9 @@ void carmen_log_to_rosbag::convert( const char* carmen_log_file_name, const char
 		int for_switch = string_to_number_for_switch[message_type];
 		switch (for_switch)
 		{
-			case 0:
+			case 1:
 				param(to_parse);
 				continue;
-			/*case 1:
-				sync(to_parse);
-				continue;
-				// this is all because I don't know how to handle sync, CARMEN docs won't tell me what it is
-			*/
 			case 2:
 				publish_odometry_message(to_parse);
 				continue;
@@ -133,8 +123,6 @@ void carmen_log_to_rosbag::convert( const char* carmen_log_file_name, const char
 // CARMEN format:
 // ODOM x y theta tv rv accel
 
-// TODO figure out what to do to tv and rv
-
 void carmen_log_to_rosbag::publish_odometry_message( const std::string& to_parse, const std::string& add_to_topic )
 {
 	// split the string
@@ -156,19 +144,6 @@ void carmen_log_to_rosbag::publish_odometry_message( const std::string& to_parse
 	vec.z = z;
 
 	geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromRollPitchYaw(0.0, 0.0, std::stof(words[3]));
-
-	// a post on answers.ros.org suggests doing it like this.
-	/*
-	 * odom_quat.x = std::stof(words[3]);
-	 * odom_quat.y = std::stof(words[4]);
-	 * odom_quat.z = std::stof(words[5]);
-	 * odom_quat.w = std::stof(words[6]);
-	 */
-
-	// link:
-	// http://answers.ros.org/question/90266/convert-carmen-log-file-into-rosbag-with-rosbag-api-problem/
-	// I do not understand where does this come from; however, it seems to be the only way to save tv, rv and accel
-	// but I am not using it unless I get some grasp on why this could be correct
 	
 	geometry_msgs::Transform transform;
 	transform.translation = vec;
@@ -227,24 +202,13 @@ void carmen_log_to_rosbag::publish_rawlaser_message( const std::string& to_parse
 	laserscan_message.range_min = 0;
 	laserscan_message.range_max = std::stof(words[5]);
 
-	// TODO accuracy? remission_mode?
-
 	int num_readings = std::stoi(words[8]);
 	for (int i = 0; i < num_readings; ++i)
 		laserscan_message.ranges.push_back(std::stof(words[9 + i]));
 
-	// I don't think that's how it works but I saw some suggestions to do it in such manner
-	/*int new_index = 9 + num_readings;
-	int num_remissions = std::stoi(words[new_index]);
-	for (int i = 0; i < num_remissions; ++i)
-		laserscan_message.intensities.push_back(std::stof(words[new_index + 1 + i]));*/
-
 	bag.write(node_private_name + "RAWLASER_topic", timestamp, laserscan_message);
 
 }
-
-// Unfortunately, no log files with TRUEPOS lines were found in the RADISH rep
-// so this attempt is a stretch of the imagination
 
 // CARMEN format:
 // TRUEPOS true_x true_y true_theta odom_x odom_y odom_theta
@@ -290,24 +254,7 @@ void carmen_log_to_rosbag::publish_truepos_message( const std::string& to_parse 
 
 	bag.write(node_private_name + "ODOM_topic", timestamp, odom_pos);
 
-	
-
-	// another version is when I publish 2 odometry messages
-	// I don't know if it's better so it'll be here in comments
-
-	/*std::string timestamp_and_location = (words[words.size() - 3]) + " " + words[words.size() - 2] 
-	                                                             + " " + words[words.size() - 1];
-
-	std::string true_odom_message;
-	separate_with_string(true_odom_message, {words[1], words[2], words[3], "0.000000", "0.000000", 
-		                                     "0.000000", timestamp_and_location});
-	publish_odometry_message(true_odom_message, "ground_truth");
-
-	std::string odom_message;
-	separate_with_string(odom_message, {words[4], words[5], words[6], "0.000000", "0.000000", 
-		                                "0.000000", timestamp_and_location});
-	publish_odometry_message(odom_message);*/
-	
+		
 }
 
 // CARMEN format:
@@ -329,12 +276,6 @@ void carmen_log_to_rosbag::publish_robotlaser_message( const std::string& to_par
 
 	publish_rawlaser_message(to_parse.substr(0, pos) + timestamp_and_location);
 
-	/* according to the docs, 'The carmen_robot_laser_message has raw odometry attached to it'
-	 * so we are going to puslish two odometry messages: first for laser, then for robot
-	 * tv and rv will be the same, accel is set to 0.000000 */
-	// it remains unknown what should be applied to forward_safety_dist and side_safety dist
-	// a possible approach: define a custom message
-
 	words = std::vector<std::string>(words.begin() + laser_message_string_size, words.end());
 	std::string common_part;
 	separate_with_string(common_part, {words[6], words[7], "0.000000", timestamp_and_location});
@@ -349,13 +290,11 @@ void carmen_log_to_rosbag::publish_robotlaser_message( const std::string& to_par
 
 }	
 
-// TODO figure out the necessary prefix for parameter name 
 void carmen_log_to_rosbag::param( const std::string& to_parse )
 {
 	std::vector<std::string> words;
 	split_string_by_space(to_parse, words);
 
-	// is it a good idea to store parameters under the node name? probably not! but at least it's not global
 	ros::param::set(node_private_name + words[1], words[2]);
 }
 
